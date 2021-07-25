@@ -1,40 +1,56 @@
 #include <Arduino.h>
-//#include "ShiftRegisterPWM.h"
+
+#define DATA_PIN 4 // Shift Register - pin 14
+#define LATCH_PIN 5
+#define CLOCK_PIN 6
+#define OUTPUT_ENABLE_PIN 3
+
+#define ShiftRegisterPWM_IGNORE_PINS {26,27,29,30}
+#include "ShiftRegisterPWM.h"
 
 #pragma region SETUP
 
-ShiftRegisterPWM *sr;
-uint8_t brightness = 0;
-
 void setup()
 {
-  Serial.begin(115200);
-  pinMode(4, OUTPUT); // data
-  pinMode(5, OUTPUT); // latch
-  pinMode(6, OUTPUT); // clock
-  
-  sr = new ShiftRegisterPWM(2, 255);
-  sr->interrupt(ShiftRegisterPWM::UpdateFrequency::Fast);
-  sr->set(0,(uint8_t)50);  
-  //sr->set(2,(uint8_t)255);
 }
 
 #pragma endregion
 
+class Timer
+{
+private:
+  uint32_t lastTime;
+  uint32_t timeout;  
+public:
+  Timer(uint32_t timeout) { start(timeout); }
+  uint32_t elapsed() { return millis() - lastTime; }
+  void start(uint32_t timeout) { this->lastTime = millis(); this->timeout = timeout; }
+  void cycle() {start(timeout);}
+  bool finished() { return (millis() - lastTime >= timeout); }
+};
+
 void loop()
 {
+  ShiftRegisterPWM sr = ShiftRegisterPWM();
+  sr.interrupt(ShiftRegisterPWM::UpdateFrequency::Medium);
+  sr.setData(0xFFFFFFFF);   
 
-  
+  int i = 0;
+  Timer t = Timer(500);  
+  while (true)
+  {    
+    uint8_t val = constrain((((float)sin(millis() / 500.0 + 0 / 8.0 * 2.0 * PI) + 1) * 15),0, 255);
+    sr.setPulseWidth(val);
 
-  //sr->set(15,(uint8_t)128);
-
-  for (uint8_t i = 0; i < 8; i++)
-  {
-    //sr.set(i, true);
-    //uint8_t val = (uint8_t)(((float)sin(millis() / 150.0 + i / 8.0 * 2.0 * PI) + 1) * 128);
-    //sr->set(i, val);
+    if (t.finished()) {         
+      i = (i + 1) % 8;      
+      t.cycle();
+      sr.toggle(i);
+      sr.toggle(8+i);
+      sr.toggle(26);
+      sr.toggle(27);
+      sr.toggle(29);      
+      sr.toggle(30);
+    }
   }
-  //delay(10);
-  
-  brightness++;
 }
