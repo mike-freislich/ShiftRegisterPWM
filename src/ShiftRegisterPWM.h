@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <stdlib.h>
 #include <avr/interrupt.h>
+#include "SimpleTimer.h"
 
 #define ShiftRegisterPWM_DATA_PORT PORTD
 #define ShiftRegisterPWM_DATA_MASK 0b00010000
@@ -22,21 +23,28 @@
     ShiftRegisterPWM_LATCH_PORT ^= ShiftRegisterPWM_LATCH_MASK
 
 #ifndef ShiftRegisterPWM_IGNORE_PINS
-#define ShiftRegisterPWM_IGNORE_PINS {29, 30}
+#define ShiftRegisterPWM_IGNORE_PINS \
+    {                                \
+        29, 30                       \
+    }
 #endif
 
-const uint8_t ignorePins[] = ShiftRegisterPWM_IGNORE_PINS;  //ShiftRegisterPWM_IGNORE_PINS;
-const uint8_t resolution = 255; // number of brightness increments
+const uint8_t ignorePins[] = ShiftRegisterPWM_IGNORE_PINS; //ShiftRegisterPWM_IGNORE_PINS;
+const uint8_t resolution = 255;                            // number of brightness increments
 volatile uint8_t dutyCounter = 0;
 volatile uint8_t isrCounter = 0;
-uint32_t ioData     = 0x00000000;
-uint32_t flashData  = 0x00000000;
+uint32_t ioData = (uint32_t)0x00000000;
+uint32_t flashData = (uint32_t)0x00000000;
+
 uint8_t speed = resolution;
 uint32_t dutyCycleMask;
 
 class ShiftRegisterPWM
 {
 private:
+    SimpleTimer flashTimer = SimpleTimer(300);
+    bool flashState = true;
+
     inline void shiftOut(uint8_t data) const
     {
         // unrolled for loop
@@ -141,13 +149,6 @@ public:
 
     static ShiftRegisterPWM *singleton; // used inside the ISR
 
-    void printData()
-    {
-        char buffer[100];
-        sprintf(buffer, "res:%d, spd:%d, isrC:%d, duty:%d", resolution, speed, isrCounter, dutyCounter);
-        Serial.println(buffer);
-    }
-
     /**
     * Constructor for a new ShiftRegisterPWM object. 
     * An object is equivalent to one shift register or multiple, serially connected shift registers.
@@ -175,6 +176,23 @@ public:
         speed = map(newSpeed, 0, 255, 0, resolution);
     }
 
+    void flash()
+    {
+        if (flashTimer.done())
+        {
+            flashTimer.cycle();
+            flashState = !flashState;
+            /*
+            for (uint8_t i = 0; i < 32; i++)
+            {
+                if (bitRead(flashData, i))
+                    bitSet(ioData, flashState);
+            }
+            */
+            ioData ^= flashData;
+        }
+    }
+
     /**
      * sets or clears the ShiftRegister pin
      * @param pin The pin on the shift register whose value will be set. 0-7 on SR1, 8-15 on SR2, .... 31 (4 SRs)
@@ -182,10 +200,20 @@ public:
      */
     void set(uint8_t pin, uint8_t value)
     {
-        if (value == 1)
+        switch (value)
+        {
+        case 1:
             bitSet(ioData, pin);
-        else
+            //bitClear(flashData, pin);
+            break;
+        case 2:
+            //bitSet(ioData, pin);
+            bitSet(flashData, pin);
+            break;
+        default:
             bitClear(ioData, pin);
+            bitClear(flashData, pin);
+        }
     }
 
     void toggle(uint8_t pin)
@@ -195,12 +223,13 @@ public:
 
     uint8_t get(uint8_t pin)
     {
-        return bitRead(ioData, pin);
+        return bitRead(flashData, pin) == 1 ? 2 : bitRead(ioData, pin);
     }
 
     void setData(uint32_t data)
     {
         ioData = data;
+        flashData = 0x00000000;
     }
 
     /** 
@@ -209,10 +238,9 @@ public:
     */
     void update()
     {
-        //ShiftRegisterPWM *s = ShiftRegisterPWM::singleton;
         uint32_t dataForWrite = ioData;
 
-        if (!(dutyCounter < speed))        // if not dutyCycle
+        if (dutyCounter > speed)           // if not dutyCycle
             dataForWrite &= dutyCycleMask; // set the ShiftRegister pins to PWM off duty cycle
 
         shiftOut(dataForWrite >> 24);
@@ -297,9 +325,9 @@ ShiftRegisterPWM *ShiftRegisterPWM::singleton = {0};
 //Timer 1 interrupt service routine (ISR)
 ISR(TIMER1_COMPA_vect)
 {          // function which will be called when an interrupt occurs at timer 1
-    cli(); // disable interrupts (in case update method takes too long)
+    cli(); //cli(); // disable interrupts (in case update method takes too long)
     ShiftRegisterPWM::singleton->update();
-    sei(); // re-enable
+    sei(); //sei(); // re-enable
 }
 
 #endif
